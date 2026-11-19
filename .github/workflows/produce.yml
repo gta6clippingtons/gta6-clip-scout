@@ -73,7 +73,7 @@ jobs:
         if: ${{ startsWith(inputs.action, 'prepare') || inputs.action == 'self-test' }}
         timeout-minutes: 5
         run: |
-          sudo sed -Ei 's|https?://[^ /]+\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://(archive|security)\.ubuntu\.com/ubuntu|https://\1.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -Ei 's#https?://[^ /]+\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g; s#http://(archive|security)\.ubuntu\.com/ubuntu#https://\1.ubuntu.com/ubuntu#g' /etc/apt/sources.list.d/ubuntu.sources
           apt_options=(-o Acquire::Retries=2 -o Acquire::https::Timeout=20)
           sudo apt-get "${apt_options[@]}" update
           sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg fonts-dejavu-core espeak

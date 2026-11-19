@@ -1,5 +1,10 @@
 {
   "twitch_game_name": "Grand Theft Auto VI",
+  "kick_category_query": "Grand Theft Auto VI",
+  "kick_category_id": null,
+  "live_min_viewers": 1000,
+  "live_alerts_per_run": 2,
+  "live_skip_mature": false,
   "youtube_queries": ["GTA 6 gameplay", "GTA 6 funny moments"],
   "youtube_search_every_min": 60,
   "subreddits": ["GTA6", "GTA"],

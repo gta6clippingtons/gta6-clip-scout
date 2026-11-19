@@ -1,0 +1,26 @@
+{
+  "twitch_game_name": "Grand Theft Auto VI",
+  "youtube_queries": ["GTA 6 gameplay", "GTA 6 funny moments"],
+  "youtube_search_every_min": 60,
+  "subreddits": ["GTA6", "GTA"],
+  "reddit_upvote_to_view": 20,
+
+  "max_age_hours": 24,
+  "min_views": {"twitch": 300, "youtube": 2000, "reddit": 2000},
+  "source_weights": {"twitch": 1.0, "youtube": 0.6, "reddit": 1.0},
+
+  "picks_per_run": 3,
+  "max_per_creator_per_run": 1,
+
+  "block_keywords": [
+    "spoiler", "ending", "final mission", "last mission", "credits scene", "post-credit",
+    "leak", "leaked", "datamine", "datamined",
+    "play early", "early access trick", "region trick", "new zealand trick",
+    "money glitch", "infinite money", "exploit", "mod menu", "hack", "cheat",
+    "free copy", "giveaway", "free gta",
+    "nude", "nudity", "nsfw", "strip club", "18+"
+  ],
+  "block_creators": [],
+
+  "claude_model": "claude-haiku-5-5"
+}

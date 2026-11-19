@@ -69,3 +69,55 @@ After that it runs every 10 minutes on its own. GitHub sometimes starts schedule
 
 ## Test offline
 `python test_scout.py` runs the full pipeline against mocked API responses.
+
+## Produce and distribute an approved clip
+
+The scheduled **clip-scout** recommends candidates. In GitHub Actions, use
+**Produce approved clip → Run workflow** for a clip the creator has cleared
+for editing and cross-posting. Copy the original link from its Discord card,
+enter the title and creator credit, and confirm the selected use. For Twitch,
+submit the clip link to use the authorized download API. For Kick, YouTube,
+and Reddit candidates, enter a creator-supplied direct MP4 as well as the
+original post link. Use a clip file for the relevant moment if the card only
+links to a live stream.
+
+| Action | Result |
+|---|---|
+| `prepare` | An editable vertical MP4, an SRT transcript, and a preview with burned-in captions and creator credit. |
+| `prepare-and-draft` | The same files. The workflow also hosts the finished MP4 and creates Buffer drafts for the selected accounts. |
+| `draft` | Creates Buffer drafts using your already hosted CapCut export or other final MP4. |
+| `queue` | Sends your already hosted final MP4 to the selected Buffer queues for scheduled publishing. |
+
+**Review and CapCut.** Download the artifact from the workflow run. Import
+`capcut.mp4` and `captions.srt` into CapCut Desktop or Web to change the
+cut, caption styling, or timing. Add the credit from `credit.txt` when you
+export from CapCut. Alternatively, preview `ready.mp4`, which already
+contains the credit and any detected speech captions. A clip without
+recognized speech has an empty SRT. Check the cut, transcript, and post copy
+before approving a draft. On a public repo, authenticated GitHub users can
+download these short-lived artifacts, so confirm that the creator allows that
+sharing, or run production in a private copy of the repo.
+
+### One-time connections
+
+- **Twitch downloads.** Use the existing `TWITCH_CLIENT_ID` and
+  `TWITCH_CLIENT_SECRET`. Set the Actions variable `TWITCH_EDITOR_ID` to
+  the numeric ID of the editor who granted this app `editor:manage:clips`
+  or the broadcaster who granted `channel:manage:clips`. The editor must
+  have access to the broadcaster's channel. Alternatively, provide the matching
+  scoped user access token as the Actions secret `TWITCH_EDITOR_ACCESS_TOKEN`.
+  Renew a user token when it expires. The creator-supplied MP4 route works
+  independently of Twitch authorization.
+- **Buffer.** Connect YouTube, TikTok and X in Buffer. Store the API key as
+  `BUFFER_API_KEY` and set Actions variables `BUFFER_YOUTUBE_CHANNEL_ID`,
+  `BUFFER_TIKTOK_CHANNEL_ID`, and `BUFFER_X_CHANNEL_ID` to the respective
+  Buffer IDs. Start with a draft and check the destination accounts. If a
+  submission succeeds only for some accounts, inspect Buffer and retry just
+  the missing destinations. Queue mode uses the connected accounts' posting slots.
+- **Automatic hosting for prepare-and-draft.** Configure an R2 bucket with a
+  public media hostname. Set Actions variables `R2_ENDPOINT`, `R2_BUCKET`,
+  and `MEDIA_PUBLIC_BASE`, plus secrets `R2_ACCESS_KEY_ID` and
+  `R2_SECRET_ACCESS_KEY` scoped to that bucket. Buffer needs the direct video
+  URL to remain reachable through publication. For draft or queue with a
+  preexisting export, enter its already hosted MP4 as the media field.
+  A publicly reachable media URL is part of this workflow.

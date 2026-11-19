@@ -303,7 +303,7 @@ def claude_drafts(c: Candidate) -> dict | None:
     try:
         r = requests.post("https://api.anthropic.com/v1/messages", headers={
             "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
-        }, json={"model": CONFIG["claude_model"], "max_tokens": 300,
+        }, json={"model": CONFIG["claude_model"], "max_tokens": 2000,
                  "messages": [{"role": "user", "content": prompt}]}, timeout=30)
         body = r.json()
         if r.status_code != 200 or "content" not in body:

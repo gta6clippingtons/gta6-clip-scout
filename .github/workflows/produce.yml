@@ -85,6 +85,16 @@ jobs:
           grep -w drawtext "$media_tools/filters.txt"
           grep -w subtitles "$media_tools/filters.txt"
           printf '%s\n' "$media_tools" >> "$GITHUB_PATH"
+          mkdir "$media_tools/fonts"
+          font="$(fc-match -f '%{file}' 'DejaVu Sans')"
+          test -r "$font"
+          cp "$font" "$media_tools/fonts/"
+          cat > "$media_tools/fonts.conf" <<EOF
+          <?xml version="1.0"?>
+          <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+          <fontconfig><dir>$media_tools/fonts</dir><cachedir>$media_tools/font-cache</cachedir></fontconfig>
+          EOF
+          printf 'FONTCONFIG_FILE=%s\n' "$media_tools/fonts.conf" >> "$GITHUB_ENV"
           python -m pip install faster-whisper==1.2.1
       - name: Test rendering and speech captions with synthetic footage
         if: ${{ inputs.action == 'self-test' }}
@@ -104,7 +114,7 @@ jobs:
               shutil.copyfile("sample.mp4", path)
 
           with patch.object(produce, "download", side_effect=copy_sample):
-              produce.prepare("https://example.com/synthetic", "Synthetic test", "", 0, 30)
+              produce.prepare("https://example.com/synthetic", "Synthetic test", "https://example.com/synthetic.mp4", 0, 30)
           assert Path("production/captions.srt").read_text().strip(), "No speech captions generated"
           for name in ("capcut.mp4", "ready.mp4"):
               dimensions = subprocess.check_output([

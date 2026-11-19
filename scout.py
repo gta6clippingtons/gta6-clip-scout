@@ -3,7 +3,7 @@
 GTA6Clippingtons clip scout.
 
 Every run (GitHub Actions, every ~10 min):
-  1. Pulls fresh GTA 6 clips/videos from Twitch, YouTube and Reddit.
+  1. Pulls fresh GTA 6 clips from Twitch (plus YouTube/Reddit) and big live GTA 6 streams on Kick.
   2. Drops spoilers, leaks, exploits, NSFW and stuff already seen.
   3. Ranks by view velocity (views per minute since posted).
   4. Sends the top new picks to Discord as ready-to-post cards:
@@ -83,6 +83,10 @@ def blocked_reason(c: Candidate) -> str | None:
         return "blocked creator"
     if c.extra.get("nsfw"):
         return "nsfw"
+    if c.extra.get("live"):
+        if c.views < CONFIG["live_min_viewers"]:
+            return "small live stream"
+        return None
     if c.views < CONFIG["min_views"].get(c.source, 0):
         return "too few views"
     if c.age_min > CONFIG["max_age_hours"] * 60:
@@ -126,6 +130,50 @@ def fetch_twitch() -> list[Candidate]:
             extra={"clipped_by": c.get("creator_name"), "language": c.get("language")},
         ))
     print(f"twitch: {len(out)} clips")
+    return out
+
+
+def fetch_kick_live() -> list[Candidate]:
+    """Kick's official API has no clips, so we watch live GTA 6 streams instead.
+    One alert per stream session when a big one is live (see live_* in config)."""
+    cid, secret = os.getenv("KICK_CLIENT_ID"), os.getenv("KICK_CLIENT_SECRET")
+    if not (cid and secret):
+        print("kick: skipped (no keys)")
+        return []
+    tok = requests.post(
+        "https://id.kick.com/oauth/token",
+        data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret},
+        timeout=20,
+    ).json()["access_token"]
+    h = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+    base = "https://api.kick.com/public/v1"
+    cat_id = CONFIG.get("kick_category_id")
+    if not cat_id:
+        cats = requests.get(f"{base}/categories", params={"q": CONFIG["kick_category_query"]},
+                            headers=h, timeout=20).json().get("data", [])
+        want = CONFIG["kick_category_query"].lower()
+        match = [c for c in cats if want in c.get("name", "").lower()] or cats
+        if not match:
+            print("kick: category not found")
+            return []
+        cat_id = match[0]["id"]
+    streams = requests.get(f"{base}/livestreams", params={
+        "category_id": cat_id, "sort": "viewer_count", "limit": 50,
+    }, headers=h, timeout=20).json().get("data", [])
+    out = []
+    for s in streams:
+        slug = s.get("slug") or str(s.get("channel_id"))
+        started = s.get("started_at") or NOW.isoformat()
+        out.append(Candidate(
+            source="kick", id=f"{slug}:{started[:16]}",  # one alert per stream session
+            title=s.get("stream_title") or f"{slug} live",
+            url=f"https://kick.com/{slug}", creator=slug, creator_url=f"https://kick.com/{slug}",
+            created_at=parse_ts(started), views=int(s.get("viewer_count", 0)),
+            thumbnail=s.get("thumbnail") or "",
+            extra={"live": True, "nsfw": s.get("has_mature_content") and CONFIG["live_skip_mature"],
+                   "language": s.get("language")},
+        ))
+    print(f"kick: {len(out)} live streams")
     return out
 
 
@@ -257,7 +305,12 @@ def claude_drafts(c: Candidate) -> dict | None:
             "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
         }, json={"model": CONFIG["claude_model"], "max_tokens": 300,
                  "messages": [{"role": "user", "content": prompt}]}, timeout=30)
-        text = r.json()["content"][0]["text"]
+        body = r.json()
+        if r.status_code != 200 or "content" not in body:
+            raise RuntimeError(f"HTTP {r.status_code}: {str(body.get('error', body))[:200]}")
+        text = "".join(b.get("text", "") for b in body["content"] if b.get("type") == "text")
+        if "{" not in text:
+            raise RuntimeError(f"no JSON in reply, block types={[b.get('type') for b in body['content']]}")
         data = json.loads(text[text.find("{"): text.rfind("}") + 1])
         return {k: data[k] for k in ("hook", "x_caption", "tiktok_caption")}
     except Exception as e:  # never let captioning break the run
@@ -272,6 +325,26 @@ def drafts_for(c: Candidate) -> dict:
 
 
 # --------------------------------------------------------------------------- output
+def live_payload(c: Candidate) -> dict:
+    mins = int(c.age_min)
+    emb = {
+        "title": f"LIVE [{c.source.upper()}] {c.creator}: {c.title[:180]}",
+        "url": c.url,
+        "color": 0x53FC18,
+        "fields": [
+            {"name": "Viewers", "value": f"{c.views:,} watching · live {mins // 60}h {mins % 60}m", "inline": True},
+            {"name": "Credit", "value": f"[{c.creator}]({c.creator_url})", "inline": True},
+            {"name": "Do this", "value": "Open the stream. When something big happens, clip it with Kick's clip button "
+                                         "(it stays credited to the streamer), or drop the VOD into OpusClip later."},
+            {"name": "Ask permission", "value": f"```Love your GTA 6 streams! Ok if GTA6Clippingtons clips and shares moments with full credit to you?```"},
+        ],
+        "footer": {"text": "Live alert · one per stream · story scenes = spoilers, skip them"},
+    }
+    if c.thumbnail:
+        emb["thumbnail"] = {"url": c.thumbnail}
+    return {"username": "GTA6Clippingtons Scout", "embeds": [emb]}
+
+
 def discord_payload(c: Candidate, d: dict, rank: int) -> dict:
     age = int(c.age_min)
     age_txt = f"{age} min" if age < 90 else f"{age // 60} h"
@@ -290,7 +363,7 @@ def discord_payload(c: Candidate, d: dict, rank: int) -> dict:
     emb = {
         "title": f"#{rank} [{c.source.upper()}] {c.title[:200]}",
         "url": c.url,
-        "color": {"twitch": 0x9146FF, "youtube": 0xFF0000, "reddit": 0xFF4500}.get(c.source, 0xFF2E88),
+        "color": {"twitch": 0x9146FF, "kick": 0x53FC18, "youtube": 0xFF0000, "reddit": 0xFF4500}.get(c.source, 0xFF2E88),
         "fields": fields,
         "footer": {"text": "Check: no story spoilers · original creator · add your hook · then OpusClip"},
     }
@@ -357,31 +430,35 @@ def pick(cands: list[Candidate], seen: dict) -> list[Candidate]:
         fresh.append(c)
     if why:
         print("filtered:", why)
-    fresh.sort(key=lambda c: c.score, reverse=True)
-    # don't flood with one streamer: max N per creator per run
+    # two lanes: clips ranked by velocity, live streams ranked by current viewers
+    clips = sorted([c for c in fresh if not c.extra.get("live")], key=lambda c: c.score, reverse=True)
+    live = sorted([c for c in fresh if c.extra.get("live")], key=lambda c: c.views, reverse=True)
     out, per = [], {}
-    for c in fresh:
+    for c in clips:
         if per.get(c.creator, 0) >= CONFIG["max_per_creator_per_run"]:
             continue
         per[c.creator] = per.get(c.creator, 0) + 1
         out.append(c)
         if len(out) >= CONFIG["picks_per_run"]:
             break
-    return out
+    return out + live[: CONFIG["live_alerts_per_run"]]
 
 
 def main() -> int:
     seen = load_seen()
     cands: list[Candidate] = []
-    for fn in (fetch_twitch, fetch_youtube, fetch_reddit):
+    for fn in (fetch_twitch, fetch_kick_live, fetch_youtube, fetch_reddit):
         try:
             cands += fn()
         except Exception as e:  # one source failing shouldn't kill the run
             print(f"{fn.__name__} failed: {e}")
     picks = pick(cands, seen)
     print(f"picked {len(picks)} of {len(cands)}")
-    rows = [(c, drafts_for(c)) for c in picks]
-    send_discord([discord_payload(c, d, i + 1) for i, (c, d) in enumerate(rows)])
+    clip_picks = [c for c in picks if not c.extra.get("live")]
+    live_picks = [c for c in picks if c.extra.get("live")]
+    rows = [(c, drafts_for(c)) for c in clip_picks]
+    send_discord([live_payload(c) for c in live_picks] +
+                 [discord_payload(c, d, i + 1) for i, (c, d) in enumerate(rows)])
     if rows:
         append_queue(rows)
     for c in picks:

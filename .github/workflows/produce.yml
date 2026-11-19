@@ -1,0 +1,150 @@
+name: Produce approved clip
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Prepare files, prepare and draft, or submit an already hosted edit
+        type: choice
+        options: [prepare, prepare-and-draft, draft, queue, self-test]
+        default: prepare
+      source:
+        description: Original Twitch, Kick, or creator post link
+        type: string
+        required: true
+      media:
+        description: Direct approved MP4 URL (optional for Twitch preparation)
+        type: string
+      title:
+        description: YouTube title
+        type: string
+        required: true
+      credit:
+        description: Creator credit, with permission for the selected use
+        type: string
+        required: true
+      caption:
+        description: Post copy (defaults to title)
+        type: string
+      start:
+        description: Start time in seconds for preparation
+        type: string
+        default: '0'
+      duration:
+        description: Maximum seconds to keep for preparation
+        type: string
+        default: '45'
+      destinations:
+        description: Comma-separated Buffer destinations
+        type: string
+        default: youtube,tiktok,x
+      confirmed:
+        description: Creator approved reuse and I authorize the selected sharing or scheduling
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: clip-production
+  cancel-in-progress: false
+jobs:
+  produce:
+    if: ${{ inputs.confirmed || inputs.action == 'self-test' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ACTION: ${{ inputs.action }}
+      SOURCE: ${{ inputs.source }}
+      MEDIA: ${{ inputs.media }}
+      TITLE: ${{ inputs.title }}
+      CREDIT: ${{ inputs.credit }}
+      CAPTION: ${{ inputs.caption }}
+      START: ${{ inputs.start }}
+      DURATION: ${{ inputs.duration }}
+      DESTINATIONS: ${{ inputs.destinations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install requests==2.32.5
+      - name: Install media tools
+        if: ${{ startsWith(inputs.action, 'prepare') || inputs.action == 'self-test' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core espeak
+          python -m pip install faster-whisper==1.2.1
+      - name: Test rendering and speech captions with synthetic footage
+        if: ${{ inputs.action == 'self-test' }}
+        run: |
+          espeak -s 140 -w speech.wav 'This is an automated test of the clip production workflow and speech captions.'
+          ffmpeg -v error -f lavfi -i color=c=blue:s=320x180:r=15 -i speech.wav -c:v libx264 -c:a aac -shortest sample.mp4
+          python - <<'PYTHON'
+          import shutil
+          import subprocess
+          from pathlib import Path
+          from unittest.mock import patch
+          import produce
+
+          def copy_sample(url, path):
+              shutil.copyfile("sample.mp4", path)
+
+          with patch.object(produce, "download", side_effect=copy_sample):
+              produce.prepare("https://example.com/synthetic", "Synthetic test", "", 0, 30)
+          assert Path("production/captions.srt").read_text().strip(), "No speech captions generated"
+          for name in ("capcut.mp4", "ready.mp4"):
+              dimensions = subprocess.check_output([
+                  "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                  "stream=width,height", "-of", "csv=p=0", "production/" + name
+              ], text=True).strip()
+              assert dimensions == "1080,1920", dimensions
+          PYTHON
+      - name: Download, edit and caption
+        if: ${{ startsWith(inputs.action, 'prepare') }}
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          TWITCH_EDITOR_ACCESS_TOKEN: ${{ secrets.TWITCH_EDITOR_ACCESS_TOKEN }}
+          TWITCH_EDITOR_ID: ${{ vars.TWITCH_EDITOR_ID }}
+        run: python produce.py prepare --source="$SOURCE" --media="$MEDIA" --title="$TITLE" --credit="$CREDIT" --start="$START" --duration="$DURATION"
+      - name: Deliver files for CapCut and review
+        if: ${{ startsWith(inputs.action, 'prepare') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: capcut-and-captioned-edit
+          path: |
+            production/capcut.mp4
+            production/ready.mp4
+            production/captions.srt
+            production/credit.txt
+          retention-days: 3
+      - name: Host prepared video for Buffer
+        if: ${{ inputs.action == 'prepare-and-draft' }}
+        env:
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          MEDIA_PUBLIC_BASE: ${{ vars.MEDIA_PUBLIC_BASE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          : "${R2_ENDPOINT:?Set R2_ENDPOINT}"
+          : "${R2_BUCKET:?Set R2_BUCKET}"
+          : "${MEDIA_PUBLIC_BASE:?Set MEDIA_PUBLIC_BASE}"
+          object="gta6/$(sha256sum production/ready.mp4 | cut -d' ' -f1).mp4"
+          aws --endpoint-url "$R2_ENDPOINT" s3 cp production/ready.mp4 "s3://$R2_BUCKET/$object" --content-type video/mp4
+          printf 'HOSTED_MEDIA=%s/%s\n' "${MEDIA_PUBLIC_BASE%/}" "$object" >> "$GITHUB_ENV"
+      - name: Submit video to Buffer
+        if: ${{ inputs.action == 'prepare-and-draft' || inputs.action == 'draft' || inputs.action == 'queue' }}
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_YOUTUBE_CHANNEL_ID: ${{ vars.BUFFER_YOUTUBE_CHANNEL_ID }}
+          BUFFER_TIKTOK_CHANNEL_ID: ${{ vars.BUFFER_TIKTOK_CHANNEL_ID }}
+          BUFFER_X_CHANNEL_ID: ${{ vars.BUFFER_X_CHANNEL_ID }}
+        run: |
+          if [ "$ACTION" = prepare-and-draft ]; then
+            ACTION=draft
+            MEDIA="$HOSTED_MEDIA"
+          fi
+          python produce.py "$ACTION" --source="$SOURCE" --media="$MEDIA" --title="$TITLE" --credit="$CREDIT" --caption="$CAPTION" --destinations="$DESTINATIONS"

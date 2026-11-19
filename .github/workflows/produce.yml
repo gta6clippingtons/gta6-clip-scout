@@ -95,7 +95,7 @@ jobs:
           <fontconfig><dir>$media_tools/fonts</dir><cachedir>$media_tools/font-cache</cachedir></fontconfig>
           EOF
           printf 'FONTCONFIG_FILE=%s\n' "$media_tools/fonts.conf" >> "$GITHUB_ENV"
-          python -m pip install faster-whisper==1.2.1
+          python -m pip install faster-whisper==1.2.1 av==18.1.0
       - name: Test rendering and speech captions with synthetic footage
         if: ${{ inputs.action == 'self-test' }}
         run: |
